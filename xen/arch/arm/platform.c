@@ -137,6 +137,12 @@ bool_t platform_device_is_blacklisted(const struct dt_device_node *node)
     return (dt_match_node(blacklist, node) != NULL);
 }
 
+void platform_route_irq_to_guest(struct domain *d, struct irq_desc *desc)
+{
+    if ( platform && platform->route_irq_to_guest )
+        platform->route_irq_to_guest(d, desc);
+}
+
 /*
  * Local variables:
  * mode: C

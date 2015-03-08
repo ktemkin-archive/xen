@@ -27,6 +27,7 @@
 
 #include <asm/gic.h>
 #include <asm/vgic.h>
+#include <asm/platform.h>
 
 static unsigned int local_irqs_type[NR_LOCAL_IRQS];
 static DEFINE_SPINLOCK(local_irqs_type_lock);
@@ -494,6 +495,9 @@ int route_irq_to_guest(struct domain *d, unsigned int virq,
         goto out;
 
     retval = gic_route_irq_to_guest(d, virq, desc, GIC_PRI_IRQ);
+
+
+    platform_route_irq_to_guest(d, desc);
 
     spin_unlock_irqrestore(&desc->lock, flags);
 
