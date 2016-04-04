@@ -54,16 +54,14 @@ struct {
     [4] = { 0x0 },
 };
 
-static int ictlr_read(struct vcpu *v, mmio_info_t *info)
+static int ictlr_read(struct vcpu *v, mmio_info_t *info, register_t *r, void *priv)
 {
     struct hsr_dabt dabt = info->dabt;
-    struct cpu_user_regs *regs = guest_cpu_user_regs();
-    register_t *r = select_user_reg(regs, dabt.reg);
     uint32_t offs = info->gpa - ICTLR_BASE;
     int ctlrnr = offs >> 8;
     int reg = offs & 0xff;
 
-    uint32_t val;
+    register_t val;
 
     if ( offs > 0x4ff )
     {
@@ -120,16 +118,13 @@ static int ictlr_read(struct vcpu *v, mmio_info_t *info)
     }
 }
 
-static int ictlr_write(struct vcpu *v, mmio_info_t *info)
+static int ictlr_write(struct vcpu *v, mmio_info_t *info, register_t r, void *priv)
 {
     struct hsr_dabt dabt = info->dabt;
-    struct cpu_user_regs *regs = guest_cpu_user_regs();
-    register_t *r = select_user_reg(regs, dabt.reg);
     uint32_t offs = info->gpa - ICTLR_BASE;
     int ctlrnr = offs >> 8;
     int reg = offs & 0xff;
-
-    uint32_t val = *r;
+    register_t val = r;
 
     if ( offs > 0x4ff )
     {
@@ -172,9 +167,9 @@ static int ictlr_write(struct vcpu *v, mmio_info_t *info)
     case 0x6C ... 0x70:
     case 0x84 ... 0x88:
     case 0x9C ... 0xA0:
-        if ( val != *r )
+        if ( val != r )
             printk("TEGRA: ICTLR%d WRITE r%d=%08"PRIregister" (%08"PRIregister") INTO %x\n",
-                   ctlrnr+1, dabt.reg, val, *r, reg);
+                   ctlrnr+1, dabt.reg, val, r, reg);
         writel(val, ictlr + offs);
         return 1;
     case 0xa8 ... 0xff:
@@ -187,8 +182,8 @@ static int ictlr_write(struct vcpu *v, mmio_info_t *info)
 }
 
 static struct mmio_handler_ops tegra_mmio_ictlr = {
-    .read_handler = ictlr_read,
-    .write_handler = ictlr_write,
+    .read = ictlr_read,
+    .write = ictlr_write,
 };
 
 static void tegra_route_irq_to_guest(struct domain *d, struct irq_desc *desc)
@@ -241,7 +236,7 @@ static int map_one_spi(struct domain *d, const char *what,
 
     printk("Additional IRQ %u (%s)\n", irq, what);
 
-    ret = route_irq_to_guest(d, irq, what);
+    ret = route_irq_to_guest(d, irq, irq, what);
     if ( ret )
         printk("Failed to route %s to dom%d\n", what, d->domain_id);
 
@@ -304,15 +299,15 @@ static int tegra_specific_mapping(struct domain *d)
     if ( ret )
         goto err;
 
-    ret = map_one_spi(d, "DISPLAY", 73, DT_IRQ_TYPE_LEVEL_HIGH);
+    ret = map_one_spi(d, "DISPLAY", 73, IRQ_TYPE_LEVEL_HIGH);
     if ( ret )
         goto err;
 
-    ret = map_one_spi(d, "DISPLAY B", 74, DT_IRQ_TYPE_LEVEL_HIGH);
+    ret = map_one_spi(d, "DISPLAY B", 74, IRQ_TYPE_LEVEL_HIGH);
     if ( ret )
         goto err;
 
-    register_mmio_handler(d, &tegra_mmio_ictlr, ICTLR_BASE, ICTLR_SIZE);
+    register_mmio_handler(d, &tegra_mmio_ictlr, ICTLR_BASE, ICTLR_SIZE, NULL);
 
     ret = 0;
 err:
@@ -358,31 +353,22 @@ static int tegra_init(void)
 
 static const char * const tegra_dt_compat[] __initconst =
 {
-    "nvidia,tegra124",
+    "nvidia,tegra210",
     NULL
 };
 
 static const struct dt_device_match tegra_blacklist_dev[] __initconst =
 {
-    /*
-     * The UARTs share a page which runs the risk of mapping the Xen console
-     * UART to dom0, so don't map any of them.
-     */
-    DT_MATCH_COMPATIBLE("nvidia,tegra20-uart"),
     { /* sentinel */ },
 };
 
-PLATFORM_START(tegra, "TEGRA124")
+PLATFORM_START(tegra, "TEGRA210")
     .compatible = tegra_dt_compat,
     .blacklist_dev = tegra_blacklist_dev,
     .init = tegra_init,
     .reset = tegra_reset,
     .specific_mapping = tegra_specific_mapping,
-
     .route_irq_to_guest = tegra_route_irq_to_guest,
-
-    .dom0_gnttab_start = 0x68000000,
-    .dom0_gnttab_size = 0x20000,
 PLATFORM_END
 
 /*
