@@ -40,7 +40,7 @@ static void __init parse_dom0_mem(const char *s)
 }
 custom_param("dom0_mem", parse_dom0_mem);
 
-//#define DEBUG_DT
+#define DEBUG_DT
 
 #ifdef DEBUG_DT
 # define DPRINT(fmt, args...) printk(XENLOG_DEBUG fmt, ##args)
