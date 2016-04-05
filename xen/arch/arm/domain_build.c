@@ -812,8 +812,8 @@ static int make_gic_node(const struct domain *d, void *fdt,
 {
     const struct dt_device_node *gic = dt_interrupt_controller;
     int res = 0;
-    const void *addrcells, *sizecells;
-    u32 addrcells_len, sizecells_len;
+    const void *addrcells, *sizecells, *iparent;
+    u32 addrcells_len, sizecells_len, iparent_len;
 
     /*
      * Xen currently supports only a single GIC. Discard any secondary
@@ -841,6 +841,16 @@ static int make_gic_node(const struct domain *d, void *fdt,
         res = fdt_property_cell(fdt, "phandle", gic->phandle);
         if ( res )
             return res;
+    }
+
+    // TODO: Ideally, the GIC's parent should always be equal to its phandle.
+    // Perhaps we should validate this?
+    iparent = dt_get_property(gic, "interrupt-parent", &iparent_len);
+    if ( iparent )
+    {
+        res = fdt_property(fdt, "interrupt-parent", iparent, iparent_len);
+        if ( res )
+          return res;
     }
 
     addrcells = dt_get_property(gic, "#address-cells", &addrcells_len);
