@@ -28,6 +28,8 @@ struct platform_desc {
     void (*poweroff)(void);
 
     void (*route_irq_to_guest)(struct domain *d, struct irq_desc *);
+    bool_t (*irq_is_routable)(struct dt_raw_irq *);
+    int (*irq_for_device)(const struct dt_device_node *device, int index);
 
     /*
      * Platform blacklist devices
@@ -48,6 +50,8 @@ void platform_poweroff(void);
 bool_t platform_device_is_blacklisted(const struct dt_device_node *node);
 
 void platform_route_irq_to_guest(struct domain *, struct irq_desc *);
+bool_t platform_irq_is_routable(struct dt_raw_irq *);
+int platform_irq_for_device(const struct dt_device_node *dev, int index);
 
 #define PLATFORM_START(_name, _namestr)                         \
 static const struct platform_desc  __plat_desc_##_name __used   \

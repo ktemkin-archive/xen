@@ -54,7 +54,7 @@ struct dt_alias_prop {
 
 static LIST_HEAD(aliases_lookup);
 
-#define DEBUG_DT
+//#define DEBUG_DT
 
 #ifdef DEBUG_DT
 # define dt_dprintk(fmt, args...) printk(XENLOG_DEBUG fmt, ##args)

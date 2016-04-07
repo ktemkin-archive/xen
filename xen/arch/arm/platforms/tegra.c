@@ -1,10 +1,11 @@
 /*
  * xen/arch/arm/platforms/tegra.c
  *
- * Nvidia Tegra specific settings
+ * NVIDIA Tegra specific settings
  *
- * Ian Campbell
- * Copyright (c) 2014 Citrix Systems
+ * Ian Campbell; Copyright (c) 2014 Citrix Systems
+ * Kyle Temkin; Copyright (c) 2016 Assured Information Security, Inc.
+ * Chris Patterson; Copyright (c) 2016 Assured Information Security, Inc.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -20,306 +21,95 @@
 #include <xen/config.h>
 #include <asm/platform.h>
 #include <xen/stdbool.h>
+#include <xen/sched.h>
 #include <xen/vmap.h>
 #include <asm/io.h>
 #include <asm/gic.h>
 
-#define ICTLR_BASE 0x60004000
-#define ICTLR_SIZE 0x00001000
+#define   ICTLR_BASE            0x60004000
+#define   ICTLR_SIZE            0x00000100
+#define   ICTLR_COUNT           6
 
-#define ICTLR_CPU_IEP_VFIQ	0x08
-#define ICTLR_CPU_IEP_FIR	0x14
-#define ICTLR_CPU_IEP_FIR_SET	0x18
-#define ICTLR_CPU_IEP_FIR_CLR	0x1c
+#define   TEGRA_RESET_BASE      0x7000e400
+#define   TEGRA_RESET_SIZE      4
 
-#define ICTLR_CPU_IER		0x20
-#define ICTLR_CPU_IER_SET	0x24
-#define ICTLR_CPU_IER_CLR	0x28
-#define ICTLR_CPU_IEP_CLASS	0x2C
+#define   ICTLR_CPU_IER         0x20
+#define   ICTLR_CPU_IER_SET     0x24
+#define   ICTLR_CPU_IER_CLR     0x28
+#define   ICTLR_CPU_IEP_CLASS   0x2C
 
-#define ICTLR_COP_IER		0x30
-#define ICTLR_COP_IER_SET	0x34
-#define ICTLR_COP_IER_CLR	0x38
-#define ICTLR_COP_IEP_CLASS	0x3c
+#define   ICTLR_COP_IER         0x30
+#define   ICTLR_COP_IER_SET     0x34
+#define   ICTLR_COP_IER_CLR     0x38
+#define   ICTLR_COP_IEP_CLASS   0x3c
 
-static void __iomem *ictlr;
-
-struct {
-    uint32_t allow_dom0;
-} ictlr_info[5] = {
-    [0] = { 0x0 },
-    [1] = { 0x0 },
-    [2] = { 0x0 },
-    [3] = { 0x0 },
-    [4] = { 0x0 },
-};
-
-static int ictlr_read(struct vcpu *v, mmio_info_t *info, register_t *r, void *priv)
-{
-    struct hsr_dabt dabt = info->dabt;
-    uint32_t offs = info->gpa - ICTLR_BASE;
-    int ctlrnr = offs >> 8;
-    int reg = offs & 0xff;
-
-    register_t val;
-
-    if ( offs > 0x4ff )
-    {
-        printk("UNHANDLED READ FROM %"PRIpaddr"\n", info->gpa);
-        domain_crash_synchronous();
-    }
-    if ( offs & 0x3 )
-    {
-        printk("MISALIGNED READ FROM %"PRIpaddr"\n", info->gpa);
-        domain_crash_synchronous();
-    }
-    if ( dabt.size != DABT_WORD )
-    {
-        printk("NON-WORD READ FROM %"PRIpaddr"\n", info->gpa);
-        domain_crash_synchronous();
-    }
-
-    switch ( reg ) {
-    /* Read only */
-    case 0x00 ... 0x14:
-    case 0x20:
-    case 0x30:
-    case 0x60 ... 0x68:
-    case 0x78 ... 0x80:
-    case 0x90 ... 0x98:
-    /* Read/write */
-    case 0x2C:
-    case 0x3C:
-    case 0x74:
-    case 0x8C:
-    case 0xA4:
-        val = readl(ictlr + offs);
-        *r = val & ictlr_info[ctlrnr].allow_dom0;
-        if ( val != *r )
-            printk("TEGRA: ICTLR%d READ %x INTO r%d=%08"PRIregister" (%08"PRIregister")\n",
-                   ctlrnr+1, reg, dabt.reg, *r, val);
-        return 1;
-    /* Write only */
-    case 0x18 ... 0x1c:
-    case 0x24 ... 0x28:
-    case 0x34 ... 0x38:
-    case 0x6C ... 0x70:
-    case 0x84 ... 0x88:
-    case 0x9C ... 0xA0:
-        printk("READ FROM WO %"PRIpaddr"\n", info->gpa);
-        domain_crash_synchronous();
-        break;
-    case 0xa8 ... 0xff:
-        printk("READ FROM NON-EXISTENT %"PRIpaddr"\n", info->gpa);
-        domain_crash_synchronous();
-        break;
-    default:
-        BUG();
-    }
-}
-
-static int ictlr_write(struct vcpu *v, mmio_info_t *info, register_t r, void *priv)
-{
-    struct hsr_dabt dabt = info->dabt;
-    uint32_t offs = info->gpa - ICTLR_BASE;
-    int ctlrnr = offs >> 8;
-    int reg = offs & 0xff;
-    register_t val = r;
-
-    if ( offs > 0x4ff )
-    {
-        printk("UNHANDLED WRITE TO %"PRIpaddr"\n", info->gpa);
-        domain_crash_synchronous();
-    }
-    if ( offs & 0x3 )
-    {
-        printk("MISALIGNED WRITE TO %"PRIpaddr"\n", info->gpa);
-        domain_crash_synchronous();
-    }
-    if ( dabt.size != DABT_WORD )
-    {
-        printk("NON-WORD WRITE TO %"PRIpaddr"\n", info->gpa);
-        domain_crash_synchronous();
-    }
-
-    val &= ictlr_info[ctlrnr].allow_dom0;
-
-    switch ( reg ) {
-    /* Read only */
-    case 0x00 ... 0x14:
-    case 0x20:
-    case 0x30:
-    case 0x60 ... 0x68:
-    case 0x78 ... 0x80:
-    case 0x90 ... 0x98:
-        printk("WRITE TO RO %"PRIpaddr"\n", info->gpa);
-        domain_crash_synchronous();
-    /* Read/write */
-    case 0x2C:
-    case 0x3C:
-    case 0x74:
-    case 0x8C:
-    case 0xA4:
-    /* Write only */
-    case 0x18 ... 0x1c:
-    case 0x24 ... 0x28:
-    case 0x34 ... 0x38:
-    case 0x6C ... 0x70:
-    case 0x84 ... 0x88:
-    case 0x9C ... 0xA0:
-        if ( val != r )
-            printk("TEGRA: ICTLR%d WRITE r%d=%08"PRIregister" (%08"PRIregister") INTO %x\n",
-                   ctlrnr+1, dabt.reg, val, r, reg);
-        writel(val, ictlr + offs);
-        return 1;
-    case 0xa8 ... 0xff:
-        printk("READ FROM NON-EXISTENT %"PRIpaddr"\n", info->gpa);
-        domain_crash_synchronous();
-        break;
-    default:
-        BUG();
-    }
-}
-
-static struct mmio_handler_ops tegra_mmio_ictlr = {
-    .read = ictlr_read,
-    .write = ictlr_write,
-};
-
-static void tegra_route_irq_to_guest(struct domain *d, struct irq_desc *desc)
-{
-    int irq = desc->irq;
-    int ctlrnr;
-    uint32_t mask;
-
-    if ( irq < NR_LOCAL_IRQS )
-        return;
-
-    if ( d->domain_id )
-        return;
-
-    ctlrnr = ( irq - NR_LOCAL_IRQS ) / 32;
-    mask = BIT((irq - NR_LOCAL_IRQS) % 32);
-    printk("TEGRA: Routing IRQ%d to dom0, ICTLR%d, mask %#08x\n",
-           irq, ctlrnr, mask);
-    ictlr_info[ctlrnr].allow_dom0 |= mask;
-}
-
-static int map_one_mmio(struct domain *d, const char *what,
-                         unsigned long start, unsigned long end)
-{
-    int ret;
-
-    printk("Additional MMIO %lx-%lx (%s)\n",
-           start, end, what);
-    ret = map_mmio_regions(d, start, end - start + 1, start);
-    if ( ret )
-        printk("Failed to map %s @ %lx to dom%d\n",
-               what, start, d->domain_id);
-    return ret;
-}
-
-static int map_one_spi(struct domain *d, const char *what,
-                       unsigned int spi, unsigned int type)
-{
-    unsigned int irq;
-    int ret;
-
-    irq = spi + 32; /* SPIs start at IRQ 32 */
-
-    ret = irq_set_spi_type(irq, type);
-    if ( ret )
-    {
-        printk("Failed to set the type for IRQ%u\n", irq);
-        return ret;
-    }
-
-    printk("Additional IRQ %u (%s)\n", irq, what);
-
-    ret = route_irq_to_guest(d, irq, irq, what);
-    if ( ret )
-        printk("Failed to route %s to dom%d\n", what, d->domain_id);
-
-    return ret;
-}
 
 /*
- * Xen does not currently support mapping MMIO regions and interrupt
- * for bus child devices (referenced via the "ranges" and
- * "interrupt-map" properties to domain 0). Instead for now map the
- * necessary resources manually.
+ * List of legacy interrupt controller's that can be used to route
+ * Tegra interrupts.
  */
-static int tegra_specific_mapping(struct domain *d)
+static const char * const tegra_interrupt_compat[] __initconst =
 {
-    int ret;
+    "nvidia,tegra210-ictlr"
+};
 
-    ret = map_one_mmio(d, "IRAM", paddr_to_pfn(0x40000000),
-                                  paddr_to_pfn(0x40040000));
-    if ( ret )
-        goto err;
+static bool_t tegra_irq_belongs_to_icltr(struct dt_raw_irq * rirq)  {
+    int i;
 
-    ret = map_one_mmio(d, "Display A", paddr_to_pfn(0x54200000),
-                                       paddr_to_pfn(0x54240000));
-    if ( ret )
-        goto err;
+    for (i = 0; i < ARRAY_SIZE(tegra_interrupt_compat); i++) 
+    {
+        if ( dt_device_is_compatible(rirq->controller, tegra_interrupt_compat[i]) )
+            return true;
+    }
 
-    ret = map_one_mmio(d, "Display B", paddr_to_pfn(0x54240000),
-                                       paddr_to_pfn(0x54280000));
-    if ( ret )
-        goto err;
-
-    ret = map_one_mmio(d, "EXCEPTION VECTORS", paddr_to_pfn(0x6000f000),
-                                               paddr_to_pfn(0x60010000));
-    if ( ret )
-        goto err;
-
-    ret = map_one_mmio(d, "SYSREG", paddr_to_pfn(0x6000c000),
-                                    paddr_to_pfn(0x6000d000));
-    if ( ret )
-        goto err;
-
-    ret = map_one_mmio(d, "PCI CFG0", paddr_to_pfn(0x01000000),
-                                      paddr_to_pfn(0x01001000));
-    if ( ret )
-        goto err;
-    ret = map_one_mmio(d, "PCI CFG1", paddr_to_pfn(0x01001000),
-                                      paddr_to_pfn(0x01002000));
-    if ( ret )
-        goto err;
-    ret = map_one_mmio(d, "PCI IO", paddr_to_pfn(0x12000000),
-                                    paddr_to_pfn(0x12010000));
-    if ( ret )
-        goto err;
-    ret = map_one_mmio(d, "PCI MEM", paddr_to_pfn(0x13000000),
-                                     paddr_to_pfn(0x20000000));
-    if ( ret )
-        goto err;
-    ret = map_one_mmio(d, "PCI MEM (PREFETCH)", paddr_to_pfn(0x20000000),
-                                                paddr_to_pfn(0x40000000));
-    if ( ret )
-        goto err;
-
-    ret = map_one_spi(d, "DISPLAY", 73, IRQ_TYPE_LEVEL_HIGH);
-    if ( ret )
-        goto err;
-
-    ret = map_one_spi(d, "DISPLAY B", 74, IRQ_TYPE_LEVEL_HIGH);
-    if ( ret )
-        goto err;
-
-    register_mmio_handler(d, &tegra_mmio_ictlr, ICTLR_BASE, ICTLR_SIZE, NULL);
-
-    ret = 0;
-err:
-    return ret;
+    return false;
 }
+
+static bool_t tegra_irq_is_routable(struct dt_raw_irq * rirq)
+{
+    /* Always allow GIC interrupts through. */
+    if ( rirq->controller == dt_interrupt_controller )
+        return true;
+
+    /* Allow legacy IC interrutps to be routable. */
+    if ( tegra_irq_belongs_to_icltr(rirq) )
+        return true;
+
+    return false;
+}
+
+static int tegra_irq_for_device(const struct dt_device_node *device, int index)
+{
+    struct dt_raw_irq raw;
+    struct dt_irq dt_irq;
+    int res;
+
+    res = dt_device_get_raw_irq(device, index, &raw);
+    if ( res )
+        return -ENODEV;
+
+    /*
+     * The translation function for the Tegra icltr happens to match the
+     * translation function for the normal GIC, so we'll use that in either
+     * case.
+     */
+    res = dt_irq_xlate(raw.specifier, raw.size, &dt_irq.irq, &dt_irq.type);
+    if ( res )
+        return -ENODEV;
+
+    if ( irq_set_type(dt_irq.irq, dt_irq.type) )
+        return -ENODEV;
+
+    return dt_irq.irq;
+}
+
 
 static void tegra_reset(void)
 {
     void __iomem *addr;
     u32 val;
-    addr = ioremap_nocache(0x7000e400, 4);
 
+    addr = ioremap_nocache(TEGRA_RESET_BASE, TEGRA_RESET_SIZE);
     if ( !addr )
     {
         printk("Tegra: Unable to map tegra reset address, can not reset...\n");
@@ -333,22 +123,38 @@ static void tegra_reset(void)
     iounmap(addr);
 }
 
-
-static int tegra_init(void)
+static int tegra_initialize_legacy_interrupt_controller(void)
 {
     int i;
+    void __iomem *ictlr = ioremap_nocache(ICTLR_BASE, ICTLR_SIZE * ICTLR_COUNT);
 
-    ictlr = ioremap_nocache(ICTLR_BASE, ICTLR_SIZE);
     if ( !ictlr )
-        panic("Failed to map intc\n");
+        panic("Failed to map legacy interrupt controller!\n");
 
-    for (i = 0; i < ARRAY_SIZE(ictlr_info); i++) {
-        void __iomem *ictlr_n = ictlr + 0x100*i;
+    /* Initialize each of the legacy interrupt controllers. */
+    for (i = 0; i < ICTLR_COUNT; i++) 
+    {
+        void __iomem *ictlr_n = ictlr + ICTLR_SIZE * i;
+
+        /* Clear the interrupt enables for every interrupt. */
         writel(~0, ictlr_n + ICTLR_CPU_IER_CLR);
+
+        /*
+         * Mark all of our interrupts as normal ARM interrupts (as opposed
+         * to Fast Interrupts.)
+         */
         writel(0, ictlr_n + ICTLR_CPU_IEP_CLASS);
     }
 
+    iounmap(ictlr);
     return 0;
+}
+
+
+
+static int tegra_init(void)
+{
+    return tegra_initialize_legacy_interrupt_controller();
 }
 
 static const char * const tegra_dt_compat[] __initconst =
@@ -357,25 +163,10 @@ static const char * const tegra_dt_compat[] __initconst =
     NULL
 };
 
-static const struct dt_device_match tegra_blacklist_dev[] __initconst =
-{
-    { /* sentinel */ },
-};
-
-PLATFORM_START(tegra, "TEGRA210")
+PLATFORM_START(tegra, "TEGRA")
     .compatible = tegra_dt_compat,
-    .blacklist_dev = tegra_blacklist_dev,
     .init = tegra_init,
     .reset = tegra_reset,
-    .specific_mapping = tegra_specific_mapping,
-    .route_irq_to_guest = tegra_route_irq_to_guest,
+    .irq_is_routable = tegra_irq_is_routable,
+    .irq_for_device = tegra_irq_for_device,
 PLATFORM_END
-
-/*
- * Local variables:
- * mode: C
- * c-file-style: "BSD"
- * c-basic-offset: 4
- * indent-tabs-mode: nil
- * End:
- */

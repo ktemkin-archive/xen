@@ -40,7 +40,7 @@ static void __init parse_dom0_mem(const char *s)
 }
 custom_param("dom0_mem", parse_dom0_mem);
 
-#define DEBUG_DT
+//#define DEBUG_DT
 
 #ifdef DEBUG_DT
 # define DPRINT(fmt, args...) printk(XENLOG_DEBUG fmt, ##args)
@@ -1143,16 +1143,15 @@ static int handle_device(struct domain *d, struct dt_device_node *dev)
 
         /*
          * Don't map IRQ that have no physical meaning
-         * ie: IRQ whose controller is not the GIC
          */
-        if ( rirq.controller != dt_interrupt_controller )
+        if ( !platform_irq_is_routable(&rirq) )
         {
             DPRINT("irq %u not connected to primary controller."
                    "Connected to %s\n", i, dt_node_full_name(rirq.controller));
             continue;
         }
 
-        res = platform_get_irq(dev, i);
+        res = platform_irq_for_device(dev, i);
         if ( res < 0 )
         {
             printk(XENLOG_ERR "Unable to get irq %u for %s\n",

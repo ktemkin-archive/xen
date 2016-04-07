@@ -143,6 +143,27 @@ void platform_route_irq_to_guest(struct domain *d, struct irq_desc *desc)
         platform->route_irq_to_guest(d, desc);
 }
 
+bool_t platform_irq_is_routable(struct dt_raw_irq * rirq)
+{
+    /*
+     * If we have a platform-specific method to determine if an IRQ is routable,
+     * check that; otherwise fall back to checking to see if an IRQ belongs to
+     * the GIC.
+     */
+    if(platform && platform->irq_is_routable)
+        return platform->irq_is_routable(rirq);
+    else
+        return (rirq->controller == dt_interrupt_controller);
+}
+
+int platform_irq_for_device(const struct dt_device_node *dev, int index)
+{
+    if(platform && platform->irq_for_device)
+        return platform->irq_for_device(dev, index);
+    else
+        return platform_get_irq(dev, index);
+}
+
 /*
  * Local variables:
  * mode: C
